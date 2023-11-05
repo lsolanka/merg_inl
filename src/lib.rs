@@ -1,6 +1,45 @@
+use faccess::PathExt;
+use std::error::Error;
+use std::io;
 use std::path::{Path, PathBuf};
+use std::process;
 
-pub fn get_parent_file_path(inl_file: &Path) -> Option<PathBuf> {
+pub fn merge(inl_files: &Vec<PathBuf>) -> Result<(), Box<dyn Error>> {
+    if let Err(error) = check_if_args_exist(inl_files) {
+        eprint!("{}", error.to_string());
+        process::exit(1);
+    }
+
+    for inl_file in inl_files.iter() {
+        merge_one(inl_file)?;
+    }
+
+    Ok(())
+}
+
+pub fn merge_one(inl_file: &Path) -> Result<(), Box<dyn Error>> {
+    let Some(parent_path) = get_parent_file_path(inl_file) else {
+        eprintln!(
+            "{} is not a file with `-inl.h` or `_inl.h` suffix; skipping",
+            inl_file.display()
+        );
+
+        return Err(Box::new(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Test",
+        )));
+    };
+
+    println!(
+        "{} parent: {}",
+        inl_file.display(),
+        parent_path.to_str().unwrap()
+    );
+
+    Ok(())
+}
+
+fn get_parent_file_path(inl_file: &Path) -> Option<PathBuf> {
     if inl_file.to_string_lossy().ends_with("-inl.h")
         || inl_file.to_string_lossy().ends_with("_inl.h")
     {
@@ -10,6 +49,36 @@ pub fn get_parent_file_path(inl_file: &Path) -> Option<PathBuf> {
     } else {
         None
     }
+}
+
+fn check_if_args_exist(file_paths: &Vec<PathBuf>) -> Result<(), io::Error> {
+    let mut bad_files: Vec<&Path> = vec![];
+
+    for file_path in file_paths.iter() {
+        if !(file_path.is_file() && file_path.readable()) {
+            bad_files.push(file_path);
+        }
+    }
+
+    if !bad_files.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            String::from("The following files are not readable:\n")
+                + &file_list_to_string(&bad_files),
+        ));
+    }
+
+    Ok(())
+}
+
+fn file_list_to_string(files: &Vec<&Path>) -> String {
+    let mut file_string = String::new();
+
+    for file in files.iter() {
+        file_string += &format!("{}\n", file.to_string_lossy());
+    }
+
+    file_string
 }
 
 #[cfg(test)]
