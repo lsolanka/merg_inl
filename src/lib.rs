@@ -10,9 +10,14 @@ pub fn merge(inl_files: &Vec<PathBuf>) -> Result<(), Box<dyn Error>> {
         process::exit(1);
     }
 
+    let mut error_list = vec![];
     for inl_file in inl_files.iter() {
-        merge_one(inl_file)?;
+        if let Err(error) = merge_one(inl_file) {
+            error_list.push(error);
+        }
     }
+
+    // TODO: process error list
 
     Ok(())
 }
@@ -37,6 +42,31 @@ pub fn merge_one(inl_file: &Path) -> Result<(), Box<dyn Error>> {
     );
 
     Ok(())
+}
+
+/// Get the path of `inl_file` relative to the include folder.
+/// Returns None if there is no `include` in the path
+fn get_include_relative_path(inl_file: &Path) -> Option<PathBuf> {
+    use std::ffi::OsStr;
+    use std::path::Component;
+
+    let mut include_relative_path = PathBuf::new();
+    let mut include_found = false;
+    for component in inl_file.components() {
+        if include_found {
+            include_relative_path.push(component);
+        } else {
+            if component == Component::Normal(OsStr::new("include")) {
+                include_found = true;
+            }
+        }
+    }
+
+    if include_found {
+        Some(include_relative_path)
+    } else {
+        None
+    }
 }
 
 fn get_parent_file_path(inl_file: &Path) -> Option<PathBuf> {
@@ -115,6 +145,35 @@ mod test {
 
             let parent_path = get_parent_file_path(&PathBuf::from("dir/fancy.h"));
             assert!(parent_path.is_none());
+        }
+    }
+
+    mod test_include_relative_path {
+        use crate::get_include_relative_path;
+        use std::path::PathBuf;
+
+        #[test]
+        fn empty_file_returns_none() {
+            assert!(get_include_relative_path(&PathBuf::new()).is_none());
+        }
+
+        #[test]
+        fn correct_file_but_no_include_returns_none() {
+            assert!(
+                get_include_relative_path(&PathBuf::from("this/is/my/include-inl.h")).is_none()
+            );
+        }
+
+        #[test]
+        fn correct_file_correct_result() {
+            let relative_path = get_include_relative_path(&PathBuf::from(
+                "/abs/path/include/my-package/my-include-inl.h",
+            ));
+            assert!(relative_path.is_some());
+            assert_eq!(
+                relative_path.unwrap(),
+                PathBuf::from("my-package/my-include-inl.h")
+            );
         }
     }
 }
