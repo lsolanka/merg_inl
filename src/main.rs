@@ -13,5 +13,9 @@ struct Args {
 
 fn main() -> Result<(), Box<dyn Error>> {
     let args = Args::parse();
-    merge_inl::merge(&args.files)
+    if let Err(error) = merge_inl::merge(&args.files) {
+        eprintln!("{}", error);
+    }
+
+    Ok(())
 }

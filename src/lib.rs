@@ -1,8 +1,59 @@
 use faccess::PathExt;
-use std::error::Error;
-use std::io;
-use std::path::{Path, PathBuf};
-use std::process;
+use regex::RegexBuilder;
+use std::fmt;
+use std::{
+    error::Error,
+    fs, io,
+    path::{Path, PathBuf},
+    process,
+};
+
+#[derive(Debug)]
+struct ErrorList {
+    preamble: String,
+    errors: Vec<Box<dyn Error>>,
+}
+
+impl ErrorList {
+    fn new(preamble: &str, errors: Vec<Box<dyn Error>>) -> ErrorList {
+        let preamble = String::from(preamble);
+        ErrorList { preamble, errors }
+    }
+}
+
+impl fmt::Display for ErrorList {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "{}", self.preamble)?;
+        for error in self.errors.iter() {
+            writeln!(f, "{}", error)?;
+        }
+
+        Ok(())
+    }
+}
+
+impl Error for ErrorList {}
+
+#[derive(Debug)]
+struct MergeError {
+    msg: String,
+}
+
+impl MergeError {
+    fn new(msg: &str) -> MergeError {
+        let msg = String::from(msg);
+        MergeError { msg }
+    }
+}
+
+impl fmt::Display for MergeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.msg)?;
+        Ok(())
+    }
+}
+
+impl Error for MergeError {}
 
 pub fn merge(inl_files: &Vec<PathBuf>) -> Result<(), Box<dyn Error>> {
     if let Err(error) = check_if_args_exist(inl_files) {
@@ -17,31 +68,58 @@ pub fn merge(inl_files: &Vec<PathBuf>) -> Result<(), Box<dyn Error>> {
         }
     }
 
-    // TODO: process error list
-
-    Ok(())
+    if error_list.len() == 0 {
+        Ok(())
+    } else {
+        Err(Box::new(ErrorList::new(
+            "Some files failed to merge:",
+            error_list,
+        )))
+    }
 }
 
 pub fn merge_one(inl_file: &Path) -> Result<(), Box<dyn Error>> {
     let Some(parent_path) = get_parent_file_path(inl_file) else {
-        eprintln!(
+        return Err(Box::new(MergeError::new(&format!(
             "{} is not a file with `-inl.h` or `_inl.h` suffix; skipping",
             inl_file.display()
-        );
-
-        return Err(Box::new(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "Test",
-        )));
+        ))));
     };
 
-    println!(
-        "{} parent: {}",
-        inl_file.display(),
-        parent_path.to_str().unwrap()
-    );
+    // println!(
+    //     "{} parent: {}",
+    //     inl_file.display(),
+    //     parent_path.to_str().unwrap()
+    // );
+
+    let parent_file = fs::read_to_string(&parent_path)?;
+    let Some(inl_file_relative) = get_include_relative_path(inl_file) else {
+        return Err(Box::new(MergeError::new(&std::format!(
+            "{} is not in any include folder; skipping",
+            inl_file.display()
+        ))));
+    };
+
+    if !contains_include(&parent_file, &inl_file_relative.to_string_lossy()) {
+        return Err(Box::new(MergeError::new(&std::format!(
+            "{} does not contain the requested -inl.h file: {}; skipping",
+            parent_path.display(),
+            inl_file_relative.display()
+        ))));
+    }
 
     Ok(())
+}
+
+fn contains_include(file: &str, include_path: &str) -> bool {
+    let re = RegexBuilder::new(&std::format!(
+        r#"^[ \t]*#include\s+[<"]{}[>"]"#,
+        include_path
+    ))
+    .multi_line(true)
+    .build()
+    .unwrap();
+    re.is_match(file)
 }
 
 /// Get the path of `inl_file` relative to the include folder.
@@ -174,6 +252,50 @@ mod test {
                 relative_path.unwrap(),
                 PathBuf::from("my-package/my-include-inl.h")
             );
+        }
+    }
+
+    mod test_contains_include {
+        use crate::contains_include;
+
+        #[test]
+        fn file_contains_include() {
+            let file_content = r#"
+                class Foo {};
+
+                #include <test/include-inl.h>
+                "#;
+            assert!(contains_include(file_content, "test/include-inl.h"));
+        }
+
+        #[test]
+        fn does_not_contain_any_include() {
+            let file_content = r#"
+                class Foo {};
+
+                1 + 2 + 3;
+                "#;
+            assert!(!contains_include(file_content, "test/include-inl.h"));
+        }
+
+        #[test]
+        fn contains_different_include() {
+            let file_content = r#"
+                class Foo {};
+
+                #include <test/include-inl.h>
+                "#;
+            assert!(!contains_include(file_content, "test/other-include-inl.h"));
+        }
+
+        #[test]
+        fn contains_include_with_apostrophes() {
+            let file_content = r#"
+                class Foo {};
+
+                #include "test/include-inl.h"
+                "#;
+            assert!(contains_include(file_content, "test/include-inl.h"));
         }
     }
 }
