@@ -40,9 +40,8 @@ struct MergeError {
 }
 
 impl MergeError {
-    fn new(msg: &str) -> MergeError {
-        let msg = String::from(msg);
-        MergeError { msg }
+    fn new<S: Into<String>>(msg: S) -> MergeError {
+        MergeError { msg: msg.into() }
     }
 }
 
@@ -79,33 +78,41 @@ pub fn merge(inl_files: &Vec<PathBuf>) -> Result<(), Box<dyn Error>> {
 }
 
 pub fn merge_one(inl_file: &Path) -> Result<(), Box<dyn Error>> {
+    log::trace!("merge_one: inl_file: {}", inl_file.display());
     let Some(parent_path) = get_parent_file_path(inl_file) else {
-        return Err(Box::new(MergeError::new(&format!(
+        let msg = format!(
             "{} is not a file with `-inl.h` or `_inl.h` suffix; skipping",
             inl_file.display()
-        ))));
+        );
+        log::warn!("{}", msg);
+        return Err(Box::new(MergeError::new(msg)));
     };
 
-    // println!(
-    //     "{} parent: {}",
-    //     inl_file.display(),
-    //     parent_path.to_str().unwrap()
-    // );
-
-    let parent_file = fs::read_to_string(&parent_path)?;
+    let Ok(parent_file) = fs::read_to_string(&parent_path) else {
+        let msg = std::format!(
+            "cannot open parent file: {} ; skipping",
+            parent_path.display()
+        );
+        log::warn!("{}", msg);
+        return Err(Box::new(MergeError::new(msg)));
+    };
     let Some(inl_file_relative) = get_include_relative_path(inl_file) else {
-        return Err(Box::new(MergeError::new(&std::format!(
+        let msg = std::format!(
             "{} is not in any include folder; skipping",
             inl_file.display()
-        ))));
+        );
+        log::warn!("{}", msg);
+        return Err(Box::new(MergeError::new(msg)));
     };
 
     if !contains_include(&parent_file, &inl_file_relative.to_string_lossy()) {
-        return Err(Box::new(MergeError::new(&std::format!(
+        let msg = std::format!(
             "{} does not contain the requested -inl.h file: {}; skipping",
             parent_path.display(),
             inl_file_relative.display()
-        ))));
+        );
+        log::warn!("{}", msg);
+        return Err(Box::new(MergeError::new(msg)));
     }
 
     Ok(())
